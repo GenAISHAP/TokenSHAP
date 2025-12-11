@@ -133,6 +133,29 @@ class ModelBase(ABC):
         """Generate response from model"""
         pass
 
+    def generate_with_tools(self,
+                           prompt: str,
+                           tools: List[Dict],
+                           tool_executor: Optional[Callable[[str, Dict], str]] = None,
+                           max_iterations: int = 10) -> Tuple[str, Dict[str, int]]:
+        """
+        Generate response with tool calling support.
+
+        Args:
+            prompt: The user prompt
+            tools: List of tool definitions (API format)
+            tool_executor: Callable(tool_name, args) -> result string
+            max_iterations: Max tool call iterations
+
+        Returns:
+            Tuple of (response_text, tool_usage_counts)
+
+        Note: Subclasses should override this for proper tool support.
+        Default implementation just calls generate() without tools.
+        """
+        # Default: no tool support, just generate
+        return self.generate(prompt), {}
+
 class HuggingFaceEmbeddings(TextVectorizer):
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2", device: str = "cpu"):
         """
@@ -308,6 +331,108 @@ class OpenAIModel(ModelBase):
             return response.choices[0].message.content
         except Exception as e:
             raise Exception(f"Error generating response: {str(e)}")
+
+    def generate_with_tools(self,
+                           prompt: str,
+                           tools: List[Dict],
+                           tool_executor: Optional[Callable[[str, Dict], str]] = None,
+                           max_iterations: int = 10) -> Tuple[str, Dict[str, int]]:
+        """
+        Generate response with tool calling support using OpenAI Chat Completions API.
+
+        Args:
+            prompt: The user prompt
+            tools: List of tool definitions (OpenAI format)
+            tool_executor: Callable(tool_name, args_dict) -> result string
+            max_iterations: Max tool call iterations
+
+        Returns:
+            Tuple of (response_text, tool_usage_counts)
+        """
+        if not self.client:
+            self._initialize_client()
+
+        # Track tool usage
+        tool_usage = {}
+
+        # If no tools provided, just generate normally
+        if not tools:
+            return self.generate(prompt), tool_usage
+
+        messages = [{"role": "user", "content": prompt}]
+
+        for iteration in range(max_iterations):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    tools=tools,
+                    temperature=0.5
+                )
+
+                message = response.choices[0].message
+
+                # Check if model wants to call tools
+                if not message.tool_calls:
+                    # No more tool calls - return final response
+                    return message.content or "", tool_usage
+
+                # Add assistant message with tool calls
+                messages.append({
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        }
+                        for tc in message.tool_calls
+                    ]
+                })
+
+                # Execute each tool call
+                for tool_call in message.tool_calls:
+                    func_name = tool_call.function.name
+                    try:
+                        func_args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError:
+                        func_args = {}
+
+                    # Track usage
+                    if func_name not in tool_usage:
+                        tool_usage[func_name] = 0
+                    tool_usage[func_name] += 1
+
+                    # Execute the tool if executor provided
+                    if tool_executor:
+                        try:
+                            result = tool_executor(func_name, func_args)
+                        except Exception as e:
+                            result = f"Error executing {func_name}: {str(e)}"
+                    else:
+                        result = f"Tool {func_name} called but no executor provided"
+
+                    # Add tool result to messages
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result
+                    })
+
+            except Exception as e:
+                # On error, return what we have
+                return f"Error in tool calling: {str(e)}", tool_usage
+
+        # Max iterations reached - return last content
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("content"):
+                return msg["content"], tool_usage
+
+        return "Max iterations reached without final response", tool_usage
 
 class OllamaModel(ModelBase):
     """Ollama model implementation supporting both text and vision"""

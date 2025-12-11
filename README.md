@@ -1,6 +1,6 @@
-# TokenSHAP & PixelSHAP: Interpreting Large Language and Vision-Language Models
+# TokenSHAP, PixelSHAP & AgentSHAP: Interpreting Large Language, Vision-Language Models and AI Agents
 
-TokenSHAP and PixelSHAP are two complementary model-agnostic interpretability frameworks for large-scale AI systems. Both methods are grounded in Monte Carlo Shapley value estimation, enabling detailed attribution of importance to individual parts of the input—whether they are **tokens in text** or **objects in images**.
+TokenSHAP, PixelSHAP, and AgentSHAP are three complementary model-agnostic interpretability frameworks for large-scale AI systems. All methods are grounded in Monte Carlo Shapley value estimation, enabling detailed attribution of importance to individual parts of the input—whether they are **tokens in text**, **objects in images**, or **tools in AI agents**.
 
 ## Overview
 
@@ -8,7 +8,9 @@ TokenSHAP and PixelSHAP are two complementary model-agnostic interpretability fr
 
 - **PixelSHAP** extends this idea to vision-language models (VLMs), attributing importance to segmented **visual objects** in an image, showing which objects influenced the textual output.
 
-These tools are essential for understanding the decision-making process of LLMs and VLMs, especially in high-stakes applications such as autonomous driving, healthcare, and legal AI.
+- **AgentSHAP** provides explainability for AI agents, measuring which **tools** the agent relied on to produce its response.
+
+These tools are essential for understanding the decision-making process of LLMs, VLMs, and AI agents, especially in high-stakes applications such as autonomous driving, healthcare, and legal AI.
 
 ---
 
@@ -96,6 +98,76 @@ pixel_shap.visualize(
 
 ---
 
+## 🤖 AgentSHAP
+
+AgentSHAP is an **explainability framework for AI agents**. It answers the question: *"Which tools did the agent rely on to produce its response?"* by computing Shapley values for each tool in the agent's toolkit.
+
+![AgentSHAP Method](images/agent_shap_method.jpeg)
+
+### Key Features
+- **Agent explainability**: Understand why an agent produced a specific response
+- **Tool attribution**: Quantify each tool's contribution to response quality
+- **Model-agnostic**: Works with any LLM that supports function calling (OpenAI, Anthropic, etc.)
+- **Visual analysis**: Red-to-blue coloring shows tool importance (like TokenSHAP)
+
+![AgentSHAP Results](images/agent_shap_results.jpeg)
+
+### Example Usage
+```python
+from token_shap import AgentSHAP, OpenAIModel, create_function_tool, TfidfTextVectorizer
+
+# Create model
+model = OpenAIModel(model_name="gpt-4o-mini", api_key="...")
+vectorizer = TfidfTextVectorizer()
+
+# Define tools with bundled executors
+weather_tool = create_function_tool(
+    name="get_weather",
+    description="Get current weather for a city",
+    parameters={
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"]
+    },
+    executor=lambda args: f"Weather in {args['city']}: 72°F, sunny"
+)
+
+stock_tool = create_function_tool(
+    name="get_stock_price",
+    description="Get stock price for a symbol",
+    parameters={
+        "type": "object",
+        "properties": {"symbol": {"type": "string"}},
+        "required": ["symbol"]
+    },
+    executor=lambda args: f"{args['symbol']}: $150.25 (+1.2%)"
+)
+
+# Create AgentSHAP and analyze
+agent_shap = AgentSHAP(model=model, tools=[weather_tool, stock_tool], vectorizer=vectorizer)
+results_df, shapley_values = agent_shap.analyze(
+    prompt="What's the weather in NYC and how is AAPL doing?",
+    sampling_ratio=0.5
+)
+
+# Visualize results
+agent_shap.print_colored_tools()      # Console output with colors
+agent_shap.plot_tool_importance()     # Bar chart
+agent_shap.plot_colored_tools()       # Matplotlib with colorbar
+```
+
+### How It Works
+AgentSHAP explains agent behavior by measuring the marginal contribution of each tool:
+
+1. **Baseline**: Run agent with all tools to get reference response
+2. **Ablation**: Test agent with different tool subsets (some tools removed)
+3. **Similarity**: Compare each ablated response to baseline
+4. **Attribution**: Compute Shapley values showing each tool's contribution
+
+**Interpreting results**: Tools with high SHAP values were critical for the response; tools with low values had minimal impact. This helps debug agent behavior, optimize tool selection, and understand agent decision-making.
+
+---
+
 ## 🧪 Installation
 
 To get started, clone the repository and install the dependencies:
@@ -135,11 +207,11 @@ If you use TokenSHAP or PixelSHAP in your research, please cite:
 ## 👥 Authors
 
 - **Roni Goldshmidt**, Nexar
-- **Miriam Horovicz**, NI
+- **Miriam Horovicz**, Fiverr
 
 For questions or support, contact:
 - roni.goldshmidt@getnexar.com
-- miriam.horovicz@ni.com
+- miriam.horovicz@fiverr.com
 
 ---
 
@@ -156,11 +228,15 @@ We welcome community contributions! To contribute:
 
 ## 📂 Repository Structure
 
-- `token_shap/` — Token-level attribution logic
-- `pixel_shap/` — Object-level attribution for VLMs
+- `token_shap/` — Core library including:
+  - `token_shap.py` — Token-level attribution for LLMs
+  - `pixel_shap.py` — Object-level attribution for VLMs
+  - `agent_shap.py` — Tool-level attribution for AI agents
+  - `tools.py` — Tool definitions for AgentSHAP
+  - `base.py` — Model abstractions (OpenAI, Ollama, etc.)
 - `notebooks/` — Jupyter notebooks with examples
 - `data/` — Images used in the documentation
 
 ---
 
-By combining TokenSHAP and PixelSHAP, this library offers full-spectrum interpretability for modern AI systems, from language-only prompts to complex multimodal inputs.
+By combining TokenSHAP, PixelSHAP, and AgentSHAP, this library offers full-spectrum interpretability for modern AI systems—from language-only prompts to complex multimodal inputs to agentic tool-calling workflows.
